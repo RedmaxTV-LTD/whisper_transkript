@@ -1,0 +1,11 @@
+fastapi>=0.110,<1
+uvicorn[standard]>=0.27,<1
+httpx>=0.27,<1
+redis>=5.0.0,<6
+faster-whisper>=1.0.0,<2
+# pyannote 3.3.x передаёт use_auth_token в hf_hub_download; в huggingface_hub 1.x этот аргумент убран — пиним hub 0.x.
+huggingface_hub>=0.23.0,<1.0
+pyannote.audio>=3.3.2,<3.4
+matplotlib>=3.7,<4
+soundfile>=0.12.1,<1
+numpy>=1.24,<3

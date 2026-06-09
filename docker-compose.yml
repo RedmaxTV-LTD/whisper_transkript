@@ -1,0 +1,114 @@
+# Запуск из каталога whisper/: том по умолчанию ./models -> /models (пути относительно этого compose-файла).
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - whisper-net
+    command: ["redis-server", "--appendonly", "yes"]
+
+  whisper-stt:
+    restart: unless-stopped
+    networks:
+      - whisper-net
+    depends_on:
+      - redis
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${WHISPER_HOST_PORT:-19900}:19900"
+    volumes:
+      # Каталог с конвертированной моделью CTranslate2 (см. faster-whisper docs).
+      - ${WHISPER_MODELS_HOST_DIR:-./models}:/models
+      # Ошибки (errors.log) и необработанные исключения (crash-*.log, crashes-index.log).
+      - ${WHISPER_LOGS_HOST_DIR:-./logs}:/logs
+      # Словарь пост-обработки: правьте dictionary.json на хосте — подхватится по mtime без перезапуска.
+      - ${WHISPER_SPELLING_CONFIG_DIR:-./spelling_config}:/config/spelling
+      # Каталог фраз для ролей спикеров (система / оператор / клиент).
+      - ${WHISPER_SPEAKER_ROLES_CONFIG_DIR:-./speaker_roles_config}:/config/speaker_roles
+    # 127.0.0.11 — встроенный DNS Docker (имена сервисов в compose-сети); публичные — для внешних URL.
+    # Только 8.8.8.8 ломает резолв имён вида http://другой-сервис/... внутри стека.
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      WHISPER_LISTEN_PORT: "19900"
+      WHISPER_LOGS_DIR: /logs
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH:-/models/turbo}
+      WHISPER_MAX_CONCURRENT_JOBS: ${WHISPER_MAX_CONCURRENT_JOBS:-1}
+      WHISPER_JOB_HEARTBEAT_SEC: ${WHISPER_JOB_HEARTBEAT_SEC:-15}
+      WHISPER_JOB_STALE_SEC: ${WHISPER_JOB_STALE_SEC:-300}
+      WHISPER_PROCESS_ROLE: api
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC: ${WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC:-0.45}
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_API_TOKEN: ${WHISPER_API_TOKEN:-}
+      WHISPER_DIARIZATION: ${WHISPER_DIARIZATION:-0}
+      WHISPER_DIARIZE_DEFAULT: ${WHISPER_DIARIZE_DEFAULT:-1}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      PYANNOTE_PIPELINE: ${PYANNOTE_PIPELINE:-pyannote/speaker-diarization-3.1}
+      PYANNOTE_DEVICE: ${PYANNOTE_DEVICE:-cpu}
+      WHISPER_SPELLING_FIXES: ${WHISPER_SPELLING_FIXES:-1}
+      WHISPER_SPELLING_DICT_PATH: ${WHISPER_SPELLING_DICT_PATH:-/config/spelling/dictionary.json}
+      WHISPER_SPEAKER_ROLES_CATALOG: ${WHISPER_SPEAKER_ROLES_CATALOG:-1}
+      WHISPER_SPEAKER_ROLES_CATALOG_PATH: ${WHISPER_SPEAKER_ROLES_CATALOG_PATH:-/config/speaker_roles/catalog.json}
+    command: ["python3", "-m", "app"]
+
+  whisper-worker:
+    restart: unless-stopped
+    networks:
+      - whisper-net
+    depends_on:
+      - redis
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ${WHISPER_MODELS_HOST_DIR:-./models}:/models
+      - ${WHISPER_LOGS_HOST_DIR:-./logs}:/logs
+      - ${WHISPER_SPELLING_CONFIG_DIR:-./spelling_config}:/config/spelling
+      - ${WHISPER_SPEAKER_ROLES_CONFIG_DIR:-./speaker_roles_config}:/config/speaker_roles
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      WHISPER_LOGS_DIR: /logs
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH:-/models/turbo}
+      WHISPER_MAX_CONCURRENT_JOBS: ${WHISPER_MAX_CONCURRENT_JOBS:-1}
+      WHISPER_JOB_HEARTBEAT_SEC: ${WHISPER_JOB_HEARTBEAT_SEC:-15}
+      WHISPER_JOB_STALE_SEC: ${WHISPER_JOB_STALE_SEC:-300}
+      WHISPER_PROCESS_ROLE: worker
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC: ${WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC:-0.45}
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_API_TOKEN: ${WHISPER_API_TOKEN:-}
+      WHISPER_DIARIZATION: ${WHISPER_DIARIZATION:-0}
+      WHISPER_DIARIZE_DEFAULT: ${WHISPER_DIARIZE_DEFAULT:-1}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      PYANNOTE_PIPELINE: ${PYANNOTE_PIPELINE:-pyannote/speaker-diarization-3.1}
+      PYANNOTE_DEVICE: ${PYANNOTE_DEVICE:-cpu}
+      WHISPER_SPELLING_FIXES: ${WHISPER_SPELLING_FIXES:-1}
+      WHISPER_SPELLING_DICT_PATH: ${WHISPER_SPELLING_DICT_PATH:-/config/spelling/dictionary.json}
+      WHISPER_SPEAKER_ROLES_CATALOG: ${WHISPER_SPEAKER_ROLES_CATALOG:-1}
+      WHISPER_SPEAKER_ROLES_CATALOG_PATH: ${WHISPER_SPEAKER_ROLES_CATALOG_PATH:-/config/speaker_roles/catalog.json}
+    command: ["python3", "-m", "app.worker"]
+
+
+networks:
+  whisper-net:
+    name: whisper-net

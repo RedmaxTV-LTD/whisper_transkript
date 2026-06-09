@@ -1,0 +1,45 @@
+# Секреты и локальная конфигурация
+.env
+google_key.json
+*.pem
+*.key
+
+# Модели (скачиваются через download_models.py или монтируются в Docker)
+models/
+whisper/models/
+
+# Логи и дампы
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Hugging Face / кэш загрузок
+.cache/
+**/.cache/
+
+# IDE и ОС
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

@@ -1,0 +1,47 @@
+# Git и метаданные
+.git
+.gitignore
+.gitattributes
+
+# Секреты (передаются через env / volumes при запуске)
+.env
+.env.*
+google_key.json
+*.pem
+*.key
+
+# Модели — монтируются томом или скачиваются в контейнере
+models/
+whisper/models/
+
+# Логи — монтируются томом
+logs/
+*.log
+
+# Конфиги на хосте — монтируются томами в compose
+spelling_config/
+speaker_roles_config/
+
+# Документация и compose (не нужны в образе)
+docs/
+README.md
+docker-compose.yml
+docker-compose.*.yml
+
+# Python-кэш и виртуальные окружения
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE и ОС
+.idea/
+.vscode/
+*.swp
+.DS_Store
