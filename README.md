@@ -11,12 +11,24 @@
 | `models/` | Том для **смонтированных** моделей: ожидаются **подкаталоги** с `model.bin`. Файлы `*.pt` здесь **не используются** рантаймом (см. `models/README.md`). |
 | `spelling_config/dictionary.json` | Словарь пост-обработки текста (ошибка → канон); в compose монтируется на `/config/spelling/`, правки на хосте подхватываются без перезапуска. |
 | `speaker_roles_config/catalog.json` | Фразы для ролей **система / оператор / клиент** по тексту начала диалога (`match_window_sec`); том → `/config/speaker_roles/`. |
+| `docs/architecture/` | Подробная архитектура и **схемы** (Mermaid): [docs/architecture/README.md](docs/architecture/README.md), [diagrams.md](docs/architecture/diagrams.md) |
 
 **Перед первым запуском:** один раз загрузите CTranslate2 в `whisper/models/` (на хосте это `./whisper/models` при стандартном compose из корня):  
 `docker compose --profile whisper run --rm whisper-stt python3 /app/download_models.py`  
 По умолчанию в compose: том `./whisper/models` → `/models`, `WHISPER_MODEL_PATH=/models/turbo`.
 
-Сервис принимает **ссылку на запись**, ставит задачу в **Redis** и обрабатывает её процессом **whisper-worker**: скачивание, **mono 16 kHz WAV**, распознавание **faster-whisper** на GPU. HTTP **POST /transcribe** сразу возвращает `job_id`; готовый текст — в **GET /jobs/{job_id}** при `status=completed`.
+Сервис принимает **ссылку на запись**, ставит задачу в **Redis** и обрабатывает её процессом **whisper-worker**: скачивание, **mono 16 kHz WAV**, распознавание (**faster-whisper** на GPU или **OpenAI API**). HTTP **POST /transcribe** сразу возвращает `job_id`; готовый текст — в **GET /jobs/{job_id}** при `status=completed`.
+
+## Бэкенд распознавания: local / openai
+
+Переключение только через `.env` (перезапуск worker):
+
+| Режим | Переменные |
+|-------|------------|
+| Локальный GPU | `WHISPER_BACKEND=local`, параллелизм — `WHISPER_MAX_CONCURRENT_JOBS` (обычно `1`) |
+| Облачный OpenAI | `WHISPER_BACKEND=openai`, `OPENAI_API_KEY=…`, параллелизм — `OPENAI_MAX_CONCURRENT_JOBS` (например `8`) |
+
+При `openai` dual RX/TX уходит **двумя параллельными** запросами в `/v1/audio/transcriptions`; роли Оператор/Клиент — как раньше по `call_direction`. Диаризация pyannote в режиме `openai` не используется (для ролей используйте `url_rx`/`url_tx`).
 
 ## Моно и роли «Оператор / Клиент»
 
@@ -30,7 +42,14 @@
 
 | Переменная | Назначение |
 |------------|------------|
-| `WHISPER_MAX_CONCURRENT_JOBS` | Максимум одновременных задач на **worker** (семафор: слот занят и на скачивании, и на GPU). При значении **1** воркер **ждёт завершения** текущей задачи перед следующим `BRPOP` из Redis (стабильнее планировщика). |
+| `WHISPER_BACKEND` | `local` (faster-whisper) или `openai` (облачный API) |
+| `WHISPER_MAX_CONCURRENT_JOBS` | Параллельные задачи при **local** (семафор GPU; при `1` — строго по одной) |
+| `OPENAI_MAX_CONCURRENT_JOBS` | Параллельные задачи при **openai** (независимо от local) |
+| `OPENAI_API_KEY` | Ключ OpenAI (обязателен при `WHISPER_BACKEND=openai`) |
+| `OPENAI_BASE_URL` | Базовый URL API (по умолчанию `https://api.openai.com/v1`) |
+| `OPENAI_TRANSCRIBE_MODEL` | Модель транскрипции (по умолчанию `whisper-1`) |
+| `OPENAI_TIMEOUT_SEC` | Таймаут одного запроса к OpenAI |
+| `OPENAI_MAX_UPLOAD_MB` | Лимит файла до сжатия/отправки (API ≤ 25 MB) |
 | `WHISPER_WORKER_QUEUE_FLUSH_ON_START` | При старте **whisper-worker**: удалить `whisper:queue` и заново **LPUSH** все задачи из Redis со статусом `queued` или `waiting_gpu` (по умолчанию `1` / `true`) |
 | `REDIS_URL` | Подключение Redis (в Docker по умолчанию `redis://redis:6379/0`) |
 | `WHISPER_JOB_HEARTBEAT_SEC` | Интервал обновления `heartbeat_at` / `updated_at` в worker (сек) |

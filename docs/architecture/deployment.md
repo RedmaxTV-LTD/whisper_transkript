@@ -1,5 +1,7 @@
 # Развёртывание
 
+Схемы контейнеров и томов: [diagrams.md](./diagrams.md) (§2, §9). Обзор системы: [overview.md](./overview.md).
+
 ## Docker Compose
 
 Запуск из каталога `/opt/whisper`:
@@ -76,9 +78,17 @@ cd /opt/whisper && docker compose down && docker compose up --build -d
 
 | Переменная | Default | Описание |
 |------------|---------|----------|
+| `WHISPER_BACKEND` | `local` | `local` \| `openai` |
 | `WHISPER_PROCESS_ROLE` | `api` / `worker` | Роль процесса |
+| `WHISPER_MAX_CONCURRENT_JOBS` | `1` | Параллельные задачи при **local** |
+| `OPENAI_MAX_CONCURRENT_JOBS` | `8` | Параллельные задачи при **openai** |
+| `OPENAI_API_KEY` | — | Ключ OpenAI |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL |
+| `OPENAI_TRANSCRIBE_MODEL` | `whisper-1` | Модель |
+| `OPENAI_TIMEOUT_SEC` | `600` | Таймаут запроса |
+| `OPENAI_MAX_UPLOAD_MB` | `24` | Лимит файла до сжатия |
+| `OPENAI_MAX_RETRIES` | `3` | Ретраи 429/5xx |
 | `REDIS_URL` | `redis://redis:6379/0` | Redis |
-| `WHISPER_MAX_CONCURRENT_JOBS` | `1` | Параллельные задачи на worker |
 | `WHISPER_WORKER_QUEUE_FLUSH_ON_START` | `1` | Сброс очереди при старте worker |
 | `WHISPER_JOB_HEARTBEAT_SEC` | `15` | Интервал heartbeat |
 | `WHISPER_JOB_STALE_SEC` | `300` | Таймаут stale |

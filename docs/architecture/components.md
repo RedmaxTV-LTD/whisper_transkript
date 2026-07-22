@@ -42,11 +42,12 @@ whisper/
 
 | Модуль | Назначение |
 |--------|------------|
-| `transcribe_pipeline.py` | Оркестрация: download → sync → transcribe → merge |
+| `transcribe_pipeline.py` | Оркестрация: download → sync → transcribe → merge; ветка `local` / `openai` |
 | `audio_prep.py` | Скачивание URL, ffmpeg → mono 16 kHz WAV |
 | `channel_sync.py` | Auto-sync RX/TX по mix (корреляция огибающих) |
-| `transcribe_engine.py` | faster-whisper: загрузка модели, transcribe, dual-track merge |
-| `diarize_engine.py` | pyannote Pipeline: lazy load, diarize mono |
+| `transcribe_engine.py` | faster-whisper (local): загрузка модели, transcribe, dual-track merge |
+| `openai_engine.py` | OpenAI Audio Transcriptions API (`WHISPER_BACKEND=openai`) |
+| `diarize_engine.py` | pyannote Pipeline: lazy load, diarize mono (только local) |
 | `align_speakers.py` | Сопоставление сегментов Whisper и меток pyannote |
 
 ### Пост-обработка текста и роли
@@ -78,7 +79,8 @@ worker.py
   ├── transcribe_pipeline
   │     ├── audio_prep, channel_sync
   │     ├── transcribe_engine ── align_speakers, spelling_fixes, speaker_roles_catalog
-  │     └── diarize_engine
+  │     ├── openai_engine (при WHISPER_BACKEND=openai)
+  │     └── diarize_engine (local + diarize)
   └── transcribe_schemas (build_transcribe_response)
 
 transcribe_engine
@@ -105,11 +107,19 @@ transcribe_engine
 
 ## Модели Whisper
 
+### Local (`WHISPER_BACKEND=local`)
+
 - Формат: **CTranslate2** (каталог с `model.bin`), не OpenAI `.pt`.
 - Загрузка: `download_models.py` → подкаталоги `/models/{tiny,base,small,medium,large,turbo}`.
-- Активная модель: `WHISPER_MODEL_PATH` (по умолчанию `/models/turbo`).
+- Активная модель: `WHISPER_MODEL_PATH` (часто `/models/turbo` или `/models/large`).
 - Worker загружает модель **один раз** при старте (`ensure_model_loaded`).
-- При `WHISPER_DIARIZATION=1` pyannote загружается **до** начала BRPOP (избежание CUDA deadlock).
+- При `WHISPER_DIARIZATION=1` pyannote загружается **до** BRPOP (избежание CUDA deadlock).
+
+### OpenAI (`WHISPER_BACKEND=openai`)
+
+- Локальные CTranslate2-модели **не** загружаются.
+- Модель API: `OPENAI_TRANSCRIBE_MODEL` (по умолчанию `whisper-1`).
+- Том `/models` можно не использовать (но compose обычно всё равно монтирует).
 
 ## Логирование
 
@@ -120,3 +130,8 @@ transcribe_engine
 | `/logs/crashes-index.log` | Индекс crash-файлов |
 
 Настраивается через `WHISPER_LOGS_DIR` (в compose: `./logs` → `/logs`).
+
+## См. также
+
+- Схемы: [diagrams.md](./diagrams.md)
+- Обзор: [overview.md](./overview.md)

@@ -12,6 +12,9 @@ whisper/models/
 logs/
 *.log
 
+# Внутренние промпты для Cursor (не в репозитории)
+docs/prompts/
+
 # Python
 __pycache__/
 *.py[cod]

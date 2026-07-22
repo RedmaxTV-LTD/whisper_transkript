@@ -7,11 +7,17 @@ import logging
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Literal
 
 from app.audio_prep import cleanup_temp_dir, prepare_audio_from_url, prepare_dual_rx_tx_from_urls
 from app.channel_sync import estimate_rx_tx_offsets_vs_mix
 from app.diarize_engine import ensure_diarization_pipeline_loaded
-from app.settings import get_settings
+from app.openai_engine import (
+    transcribe_mix_only_result_openai,
+    transcribe_mono_openai,
+    transcribe_wav_to_parts_openai,
+)
+from app.settings import Settings, get_settings
 from app.transcribe_body import SyncOptionsBody, TranscribeBody
 from app.transcribe_engine import (
     TranscribeResult,
@@ -33,6 +39,92 @@ async def _notify(cb: StepCallback | None, status: str, step: str, progress: int
         await cb(status, step, progress)
 
 
+def _is_openai(settings: Settings) -> bool:
+    return settings.whisper_backend == "openai"
+
+
+async def _wav_to_parts(
+    executor: ThreadPoolExecutor,
+    wav_path: str,
+    settings: Settings,
+    *,
+    model: object | None,
+) -> tuple[list[tuple[float, float, str]], str | None]:
+    loop = asyncio.get_running_loop()
+    if _is_openai(settings):
+        return await loop.run_in_executor(executor, lambda: transcribe_wav_to_parts_openai(wav_path, settings))
+    assert model is not None
+    return await loop.run_in_executor(executor, lambda: transcribe_wav_to_parts(model, wav_path, settings))
+
+
+async def _parallel_rx_tx_parts(
+    executor: ThreadPoolExecutor,
+    rx_wav: str,
+    tx_wav: str,
+    settings: Settings,
+    *,
+    model: object | None,
+) -> tuple[
+    list[tuple[float, float, str]],
+    str | None,
+    list[tuple[float, float, str]],
+    str | None,
+]:
+    """RX и TX: на openai — параллельно; на local — последовательно (GPU)."""
+    if _is_openai(settings):
+        (parts_rx, lang_rx), (parts_tx, lang_tx) = await asyncio.gather(
+            _wav_to_parts(executor, rx_wav, settings, model=None),
+            _wav_to_parts(executor, tx_wav, settings, model=None),
+        )
+        return parts_rx, lang_rx, parts_tx, lang_tx
+    parts_rx, lang_rx = await _wav_to_parts(executor, rx_wav, settings, model=model)
+    parts_tx, lang_tx = await _wav_to_parts(executor, tx_wav, settings, model=model)
+    return parts_rx, lang_rx, parts_tx, lang_tx
+
+
+async def _mix_only(
+    executor: ThreadPoolExecutor,
+    mix_wav: str,
+    settings: Settings,
+    call_direction: Literal["incoming", "outgoing"],
+    *,
+    model: object | None,
+) -> TranscribeResult:
+    loop = asyncio.get_running_loop()
+    if _is_openai(settings):
+        return await loop.run_in_executor(
+            executor,
+            lambda: transcribe_mix_only_result_openai(mix_wav, settings, call_direction=call_direction),
+        )
+    assert model is not None
+    return await loop.run_in_executor(
+        executor,
+        lambda: transcribe_mix_only_result(model, mix_wav, settings, call_direction=call_direction),
+    )
+
+
+async def _dual_fallback_no_offsets(
+    executor: ThreadPoolExecutor,
+    rx_wav: str,
+    tx_wav: str,
+    settings: Settings,
+    call_direction: Literal["incoming", "outgoing"],
+    *,
+    model: object | None,
+) -> TranscribeResult:
+    if _is_openai(settings):
+        # Параллельные RX/TX через gather внутри pipeline-хелпера.
+        parts_rx, lang_rx, parts_tx, lang_tx = await _parallel_rx_tx_parts(
+            executor, rx_wav, tx_wav, settings, model=None
+        )
+        return build_dual_track_result_from_parts(parts_rx, parts_tx, lang_rx, lang_tx, call_direction)
+    assert model is not None
+    return await asyncio.get_running_loop().run_in_executor(
+        executor,
+        lambda: transcribe_dual_rx_tx(model, rx_wav, tx_wav, settings, call_direction),
+    )
+
+
 async def run_transcription_pipeline(
     body: TranscribeBody,
     *,
@@ -44,7 +136,8 @@ async def run_transcription_pipeline(
     wav_path: Path | None = None
     source_channels = 1
     layout = "mono"
-    model = get_model()
+    use_openai = _is_openai(settings)
+    model = None if use_openai else get_model()
 
     try:
         if body.url_rx is not None:
@@ -64,16 +157,9 @@ async def run_transcription_pipeline(
             max_off = max(0.05, max_off)
 
             if sync.mode == "off":
-                await _notify(step_callback, "transcribing_rx", "transcribing rx channel", 25)
-
-                def _rx_only():
-                    return transcribe_wav_to_parts(model, str(rx_wav), settings)
-
-                parts_rx, lang_rx = await asyncio.get_running_loop().run_in_executor(executor, _rx_only)
-                await _notify(step_callback, "transcribing_tx", "transcribing tx channel", 55)
-                parts_tx, lang_tx = await asyncio.get_running_loop().run_in_executor(
-                    executor,
-                    lambda: transcribe_wav_to_parts(model, str(tx_wav), settings),
+                await _notify(step_callback, "transcribing_rx", "transcribing rx/tx channels", 25)
+                parts_rx, lang_rx, parts_tx, lang_tx = await _parallel_rx_tx_parts(
+                    executor, str(rx_wav), str(tx_wav), settings, model=model
                 )
                 await _notify(step_callback, "merging_segments", "merging rx/tx segments", 85)
                 t_result = build_dual_track_result_from_parts(
@@ -97,43 +183,23 @@ async def run_transcription_pipeline(
                     if sync.fallback == "use_mix":
                         assert mix_wav is not None
                         await _notify(step_callback, "transcribing_mix", "transcribing url_mix (fallback)", 40)
-
-                        def _mix_fb():
-                            return transcribe_mix_only_result(
-                                model,
-                                str(mix_wav),
-                                settings,
-                                call_direction=body.call_direction,
-                            )
-
                         return (
-                            await asyncio.get_running_loop().run_in_executor(executor, _mix_fb),
+                            await _mix_only(
+                                executor, str(mix_wav), settings, body.call_direction, model=model
+                            ),
                             source_channels,
                             layout,
                         )
                     return (
-                        await asyncio.get_running_loop().run_in_executor(
-                            executor,
-                            lambda: transcribe_dual_rx_tx(
-                                model,
-                                str(rx_wav),
-                                str(tx_wav),
-                                settings,
-                                body.call_direction,
-                            ),
+                        await _dual_fallback_no_offsets(
+                            executor, str(rx_wav), str(tx_wav), settings, body.call_direction, model=model
                         ),
                         source_channels,
                         layout,
                     )
-                await _notify(step_callback, "transcribing_rx", "transcribing rx channel (manual sync)", 25)
-                parts_rx, lang_rx = await asyncio.get_running_loop().run_in_executor(
-                    executor,
-                    lambda: transcribe_wav_to_parts(model, str(rx_wav), settings),
-                )
-                await _notify(step_callback, "transcribing_tx", "transcribing tx channel (manual sync)", 55)
-                parts_tx, lang_tx = await asyncio.get_running_loop().run_in_executor(
-                    executor,
-                    lambda: transcribe_wav_to_parts(model, str(tx_wav), settings),
+                await _notify(step_callback, "transcribing_rx", "transcribing rx/tx channels (manual sync)", 25)
+                parts_rx, lang_rx, parts_tx, lang_tx = await _parallel_rx_tx_parts(
+                    executor, str(rx_wav), str(tx_wav), settings, model=model
                 )
                 await _notify(step_callback, "merging_segments", "merging rx/tx segments", 85)
                 t_result = build_dual_track_result_from_parts(
@@ -172,43 +238,23 @@ async def run_transcription_pipeline(
                 log.warning("dual_sync_auto_both_untrusted fallback=%s", sync.fallback)
                 if sync.fallback == "use_mix":
                     await _notify(step_callback, "transcribing_mix", "transcribing url_mix (auto fallback)", 40)
-
-                    def _mix_fb2():
-                        return transcribe_mix_only_result(
-                            model,
-                            str(mix_wav),
-                            settings,
-                            call_direction=body.call_direction,
-                        )
-
                     return (
-                        await asyncio.get_running_loop().run_in_executor(executor, _mix_fb2),
+                        await _mix_only(
+                            executor, str(mix_wav), settings, body.call_direction, model=model
+                        ),
                         source_channels,
                         layout,
                     )
                 return (
-                    await asyncio.get_running_loop().run_in_executor(
-                        executor,
-                        lambda: transcribe_dual_rx_tx(
-                            model,
-                            str(rx_wav),
-                            str(tx_wav),
-                            settings,
-                            body.call_direction,
-                        ),
+                    await _dual_fallback_no_offsets(
+                        executor, str(rx_wav), str(tx_wav), settings, body.call_direction, model=model
                     ),
                     source_channels,
                     layout,
                 )
-            await _notify(step_callback, "transcribing_rx", "transcribing rx channel (synced)", 30)
-            parts_rx, lang_rx = await asyncio.get_running_loop().run_in_executor(
-                executor,
-                lambda: transcribe_wav_to_parts(model, str(rx_wav), settings),
-            )
-            await _notify(step_callback, "transcribing_tx", "transcribing tx channel (synced)", 55)
-            parts_tx, lang_tx = await asyncio.get_running_loop().run_in_executor(
-                executor,
-                lambda: transcribe_wav_to_parts(model, str(tx_wav), settings),
+            await _notify(step_callback, "transcribing_rx", "transcribing rx/tx channels (synced)", 30)
+            parts_rx, lang_rx, parts_tx, lang_tx = await _parallel_rx_tx_parts(
+                executor, str(rx_wav), str(tx_wav), settings, model=model
             )
             await _notify(step_callback, "merging_segments", "merging rx/tx segments", 85)
             t_result = build_dual_track_result_from_parts(
@@ -229,6 +275,19 @@ async def run_transcription_pipeline(
         assert body.url is not None
         await _notify(step_callback, "downloading", "downloading audio", 8)
         wav_path, source_channels, layout = await prepare_audio_from_url(str(body.url))
+
+        if use_openai:
+            if body.diarize is True or (
+                body.diarize is None and settings.diarization_enabled and settings.diarize_default
+            ):
+                log.info("openai_backend_diarization_skipped note=use_dual_rx_tx_for_roles")
+            await _notify(step_callback, "transcribing_mix", "transcribing via openai", 40)
+            t_result = await asyncio.get_running_loop().run_in_executor(
+                executor,
+                lambda: transcribe_mono_openai(str(wav_path), settings),
+            )
+            return t_result, source_channels, layout
+
         use_diar = False
         if settings.diarization_enabled:
             use_diar = settings.diarize_default if body.diarize is None else bool(body.diarize)

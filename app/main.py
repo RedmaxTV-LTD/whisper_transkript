@@ -264,7 +264,10 @@ async def health(request: Request) -> dict[str, Any]:
     out: dict[str, Any] = {
         "status": "ok",
         "process_role": settings.process_role,
+        "whisper_backend": settings.whisper_backend,
         "max_concurrent_jobs": settings.max_concurrent_jobs,
+        "local_max_concurrent_jobs": settings.local_max_concurrent_jobs,
+        "openai_max_concurrent_jobs": settings.openai_max_concurrent_jobs,
         "transcription": "worker",
     }
     r: redis.Redis | None = getattr(request.app.state, "redis", None)
