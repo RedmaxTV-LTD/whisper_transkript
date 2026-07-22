@@ -9,7 +9,16 @@
 
 ### Added
 
-- (пока пусто)
+- Гибридный бэкенд распознавания: `WHISPER_BACKEND=local|openai` (переключение через `.env`).
+- Облачный OpenAI Audio Transcriptions (`app/openai_engine.py`): `verbose_json`, retry на 429/5xx, сжатие файла > лимита в mp3.
+- Dual RX/TX через OpenAI — два параллельных запроса; роли по `call_direction` без изменений API.
+- Раздельный параллелизм: `WHISPER_MAX_CONCURRENT_JOBS` (local) и `OPENAI_MAX_CONCURRENT_JOBS` (openai).
+- `/health`: поля `whisper_backend`, `local_max_concurrent_jobs`, `openai_max_concurrent_jobs`.
+- Подробная архитектурная документация и схемы Mermaid: `docs/architecture/` (включая `diagrams.md`).
+
+### Changed
+
+- Worker при `openai` не загружает faster-whisper / pyannote; при `local` поведение прежнее.
 
 ## [1.0.0] — 2026-06-09
 

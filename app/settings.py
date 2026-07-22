@@ -42,7 +42,27 @@ def get_settings() -> "Settings":
 
 class Settings:
     def __init__(self) -> None:
-        self.max_concurrent_jobs: int = max(1, _int("WHISPER_MAX_CONCURRENT_JOBS", 1))
+        # local = faster-whisper на GPU; openai = облачный OpenAI Audio Transcriptions API.
+        _backend = _str("WHISPER_BACKEND", "local").strip().lower() or "local"
+        if _backend not in ("local", "openai"):
+            _backend = "local"
+        self.whisper_backend: str = _backend
+        # Параллелизм раздельно: локальный GPU обычно 1; OpenAI — по RPM tier.
+        self.local_max_concurrent_jobs: int = max(1, _int("WHISPER_MAX_CONCURRENT_JOBS", 1))
+        self.openai_max_concurrent_jobs: int = max(1, _int("OPENAI_MAX_CONCURRENT_JOBS", 8))
+        # Активный лимит для текущего WHISPER_BACKEND (используется worker/health).
+        self.max_concurrent_jobs: int = (
+            self.openai_max_concurrent_jobs if self.whisper_backend == "openai" else self.local_max_concurrent_jobs
+        )
+        _oa_key = _str("OPENAI_API_KEY", "").strip()
+        self.openai_api_key: str | None = _oa_key or None
+        _oa_base = _str("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+        self.openai_base_url: str = _oa_base if _oa_base else "https://api.openai.com/v1"
+        _oa_model = _str("OPENAI_TRANSCRIBE_MODEL", "whisper-1").strip()
+        self.openai_transcribe_model: str = _oa_model if _oa_model else "whisper-1"
+        self.openai_timeout_sec: float = max(30.0, _float("OPENAI_TIMEOUT_SEC", 600.0))
+        self.openai_max_upload_mb: float = max(1.0, _float("OPENAI_MAX_UPLOAD_MB", 24.0))
+        self.openai_max_retries: int = max(0, _int("OPENAI_MAX_RETRIES", 3))
         # api: только HTTP + Redis (без загрузки Whisper в память API-контейнера); worker: обработчик очереди.
         self.process_role: str = _str("WHISPER_PROCESS_ROLE", "api").strip().lower() or "api"
         self.redis_url: str | None = (

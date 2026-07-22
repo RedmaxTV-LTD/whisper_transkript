@@ -1,40 +1,57 @@
 # Архитектура Whisper STT
 
-Документация описывает GPU-sidecar сервис распознавания речи для колл-центра: асинхронная постановка задач через HTTP, обработка на **faster-whisper** (CUDA) и опциональная **pyannote**-диаризация.
+Подробное описание GPU-/cloud-sidecar сервиса распознавания речи для записей колл-центра: асинхронная очередь Redis, гибридный бэкенд **local** (faster-whisper) / **openai** (облачный API), dual-track RX/TX и опциональная диаризация pyannote.
 
 ## Содержание
 
 | Документ | Описание |
 |----------|----------|
-| [overview.md](./overview.md) | Обзор системы, роли процессов, внешние зависимости |
-| [components.md](./components.md) | Модули `app/`, конфигурация, вспомогательные каталоги |
-| [data-flow.md](./data-flow.md) | Потоки данных: API → Redis → worker → результат |
-| [redis-and-jobs.md](./redis-and-jobs.md) | Модель задач, статусы, дедупликация, watchdog |
-| [deployment.md](./deployment.md) | Docker Compose, тома, переменные окружения, модели |
+| [overview.md](./overview.md) | Назначение, принципы, стек, режимы аудио, бэкенды |
+| [diagrams.md](./diagrams.md) | **Схемы архитектуры** (контекст, контейнеры, потоки, бэкенды) |
+| [components.md](./components.md) | Модули `app/`, тома, модели, зависимости |
+| [data-flow.md](./data-flow.md) | Потоки: постановка → обработка → ответ |
+| [redis-and-jobs.md](./redis-and-jobs.md) | Ключи Redis, статусы, dedup, watchdog, семафор |
+| [deployment.md](./deployment.md) | Docker Compose, env, GPU, масштабирование |
 
-## Краткая схема
+## Кратко о системе
 
+```mermaid
+flowchart TB
+  subgraph clients [Clients]
+    N8N[n8n_CRM]
+  end
+  subgraph compose [Docker_Compose]
+    API[whisper-stt_FastAPI]
+    Redis[(Redis)]
+    Worker[whisper-worker]
+  end
+  subgraph stt [STT_Backend]
+    Local[faster-whisper_GPU]
+    Cloud[OpenAI_API]
+  end
+  Audio[(HTTPS_audio_URLs)]
+
+  N8N -->|POST_/transcribe| API
+  N8N -->|GET_/jobs| API
+  API <--> Redis
+  Redis --> Worker
+  Worker --> Audio
+  Worker -->|WHISPER_BACKEND_local| Local
+  Worker -->|WHISPER_BACKEND_openai| Cloud
 ```
-Клиент (n8n, CRM, …)
-        │  POST /transcribe
-        ▼
-┌───────────────────┐     LPUSH/BRPOP      ┌────────────────────┐
-│  whisper-stt      │◄────────────────────►│  Redis             │
-│  (FastAPI, role=api)│   whisper:queue      │  whisper:job:*     │
-└───────────────────┘                      │  whisper:dedup:*   │
-        │ GET /jobs/…                      └─────────┬──────────┘
-        │                                            │ BRPOP
-        │                                            ▼
-        │                                  ┌────────────────────┐
-        │                                  │  whisper-worker    │
-        │                                  │  (role=worker, GPU)│
-        │                                  └─────────┬──────────┘
-        │                                            │
-        │         HTTPS (скачивание записей)         ▼
-        └──────────────────────────────────  faster-whisper + pyannote
+
+## Критическое правило
+
+```text
+HTTP API must never block on GPU / OpenAI transcription.
 ```
 
-## Связанные материалы
+`POST /transcribe` только ставит задачу в Redis и возвращает `job_id`. Распознавание выполняет **whisper-worker**.
 
-- [README.md](../../README.md) — быстрый старт, API, интеграция с n8n
-- OpenAPI: `/docs`, `/redoc` (при запущенном сервисе)
+## Быстрые ссылки
+
+- Переключение бэкенда: `WHISPER_BACKEND=local|openai` (см. [deployment.md](./deployment.md))
+- Параллелизм: `WHISPER_MAX_CONCURRENT_JOBS` (local) и `OPENAI_MAX_CONCURRENT_JOBS` (openai)
+- Пользовательский README: [../../README.md](../../README.md)
+- Changelog: [../changelog/CHANGELOG.md](../changelog/CHANGELOG.md)
+- OpenAPI при запуске: `/docs`, `/redoc`

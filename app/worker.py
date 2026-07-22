@@ -93,7 +93,10 @@ async def _acquire_job_sem_with_heartbeat(
     """Ожидание слота GPU: при WHISPER_MAX_CONCURRENT_JOBS=1 следующая задача висела на sem без heartbeat — stale watchdog."""
     settings = get_settings()
     interval = min(45.0, max(5.0, float(settings.job_heartbeat_sec)))
-    busy_step = "run slot busy (another job: download or GPU)"
+    if settings.whisper_backend == "openai":
+        busy_step = "run slot busy (another job: download or OpenAI)"
+    else:
+        busy_step = "run slot busy (another job: download or GPU)"
     while True:
         try:
             await asyncio.wait_for(job_sem.acquire(), timeout=interval)
@@ -357,11 +360,18 @@ async def _process_job_inner(
             )
         except Exception as e:
             log.exception("transcribe_job_failed job_id=%s", job_id)
+            err_name = type(e).__name__
+            err_msg = str(e)
+            # OpenAITranscribeError и RuntimeError с префиксом openai_*
+            if "openai_" in err_msg or err_name == "OpenAITranscribeError":
+                detail = err_msg if err_msg.startswith("openai_") else f"openai_failed:{err_msg}"
+            else:
+                detail = f"transcribe_failed:{err_name}:{e}"
             await _patch_job(
                 redis_c,
                 job_id,
                 status="failed",
-                error=f"transcribe_failed:{type(e).__name__}:{e}",
+                error=detail,
                 current_step="failed",
                 completed=True,
             )
@@ -369,7 +379,7 @@ async def _process_job_inner(
                 "transcribe_job_failed job_id=%s dedup_key=%s status=failed current_step=failed error=%s",
                 job_id,
                 rec.dedup_key,
-                type(e).__name__,
+                err_name,
             )
         finally:
             stop.set()
@@ -389,11 +399,21 @@ async def worker_main_async() -> None:
     settings = get_settings()
     if settings.redis_url is None:
         raise RuntimeError("REDIS_URL is required for worker")
+    if settings.whisper_backend == "openai" and not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is required when WHISPER_BACKEND=openai")
     redis_c = await connect_redis(settings.redis_url)
-    await ensure_model_loaded()
-    # Нельзя BRPOP/транскрибировать параллельно с первичной загрузкой pyannote на CUDA — зависание GPU/процесса.
-    if settings.diarization_enabled:
-        await ensure_diarization_pipeline_loaded()
+    if settings.whisper_backend == "local":
+        await ensure_model_loaded()
+        # Нельзя BRPOP/транскрибировать параллельно с первичной загрузкой pyannote на CUDA — зависание GPU/процесса.
+        if settings.diarization_enabled:
+            await ensure_diarization_pipeline_loaded()
+    else:
+        log.info(
+            "worker_openai_backend model=%s base_url=%s max_concurrent=%s",
+            settings.openai_transcribe_model,
+            settings.openai_base_url,
+            settings.max_concurrent_jobs,
+        )
     stats = await recover_jobs_on_worker_startup(redis_c)
     if stats.get("requeued") or stats.get("orphaned") or stats.get("flushed"):
         log.info(
@@ -413,7 +433,9 @@ async def worker_main_async() -> None:
             await asyncio.sleep(settings.worker_alive_refresh_sec)
 
     asyncio.create_task(_alive_loop(), name="worker-alive")
-    executor = ThreadPoolExecutor(max_workers=max(1, settings.max_concurrent_jobs))
+    # При openai dual RX/TX идут параллельно внутри job → больше потоков executor.
+    exec_workers = max(1, settings.max_concurrent_jobs * (2 if settings.whisper_backend == "openai" else 1))
+    executor = ThreadPoolExecutor(max_workers=exec_workers)
     job_sem = asyncio.Semaphore(max(1, settings.max_concurrent_jobs))
     tasks: set[asyncio.Task[None]] = set()
 
@@ -423,7 +445,13 @@ async def worker_main_async() -> None:
             log.error("job_task_failed: %s", exc)
 
     asyncio.create_task(_run_watchdog(redis_c), name="stale-watchdog")
-    log.info("worker_started max_concurrent_jobs=%s", settings.max_concurrent_jobs)
+    log.info(
+        "worker_started backend=%s max_concurrent_jobs=%s local_max=%s openai_max=%s",
+        settings.whisper_backend,
+        settings.max_concurrent_jobs,
+        settings.local_max_concurrent_jobs,
+        settings.openai_max_concurrent_jobs,
+    )
 
     try:
         while True:
@@ -431,7 +459,7 @@ async def worker_main_async() -> None:
             if not job_id:
                 await asyncio.sleep(0)
                 continue
-            # WHISPER_MAX_CONCURRENT_JOBS==1: обрабатываем без лишнего Task (устойчивее к планировщику).
+            # max_concurrent==1: обрабатываем без лишнего Task (устойчивее к CUDA-планировщику).
             if settings.max_concurrent_jobs <= 1:
                 await _process_job(redis_c, job_id, executor, job_sem)
             else:

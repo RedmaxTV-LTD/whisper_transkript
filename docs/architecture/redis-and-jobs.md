@@ -94,11 +94,18 @@ Worker alive:
 
 ## Семафор параллелизма
 
-`WHISPER_MAX_CONCURRENT_JOBS` ограничивает одновременные задачи **на одном worker**:
+Параллелизм зависит от `WHISPER_BACKEND`:
 
-- Слот занят с момента acquire до release (скачивание + GPU).
+| Backend | Переменная | Default |
+|---------|------------|---------|
+| `local` | `WHISPER_MAX_CONCURRENT_JOBS` | `1` |
+| `openai` | `OPENAI_MAX_CONCURRENT_JOBS` | `8` |
+
+Активный лимит (`settings.max_concurrent_jobs`) ограничивает одновременные задачи **на одном worker**:
+
+- Слот занят с момента acquire до release (скачивание + STT).
 - При значении `1` следующая задача остаётся в `waiting_gpu` с heartbeat «run slot busy».
-- Это стабилизирует планировщик CUDA и снижает риск OOM.
+- Для local это стабилизирует CUDA; для openai значение можно поднять под RPM tier аккаунта.
 
 ## Типичные сценарии сбоев
 

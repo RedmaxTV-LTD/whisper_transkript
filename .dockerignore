@@ -22,7 +22,8 @@ logs/
 spelling_config/
 speaker_roles_config/
 
-# Документация и compose (не нужны в образе)
+# Документация — не попадает в контекст сборки и в образ (в Dockerfile не копируется)
+docs
 docs/
 README.md
 docker-compose.yml
