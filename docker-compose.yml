@@ -9,6 +9,7 @@ services:
 
   whisper-stt:
     restart: unless-stopped
+    stop_grace_period: 15s
     networks:
       - whisper-net
     depends_on:
@@ -58,6 +59,12 @@ services:
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
       WHISPER_API_TOKEN: ${WHISPER_API_TOKEN:-}
+      WHISPER_API_TOKEN_NAME: ${WHISPER_API_TOKEN_NAME:-default}
+      WHISPER_UI_USER: ${WHISPER_UI_USER:-}
+      WHISPER_UI_PASSWORD: ${WHISPER_UI_PASSWORD:-}
+      WHISPER_UI_SESSION_TTL_SEC: ${WHISPER_UI_SESSION_TTL_SEC:-86400}
+      WHISPER_VRAM_PER_SLOT_MB: ${WHISPER_VRAM_PER_SLOT_MB:-0}
+      WHISPER_VRAM_RESERVE_MB: ${WHISPER_VRAM_RESERVE_MB:-800}
       WHISPER_DIARIZATION: ${WHISPER_DIARIZATION:-0}
       WHISPER_DIARIZE_DEFAULT: ${WHISPER_DIARIZE_DEFAULT:-1}
       HF_TOKEN: ${HF_TOKEN:-}
@@ -72,6 +79,12 @@ services:
 
   whisper-worker:
     restart: unless-stopped
+    # SIGTERM → выход из BRPOP; при активной OpenAI-задаче Docker ждёт до grace, затем SIGKILL.
+    stop_grace_period: 20s
+    stop_signal: SIGTERM
+    # Лимиты для корректных CPU/RAM в UI «Нагрузка worker» (cgroup → mem_limit_mb, cpu%).
+    mem_limit: 8g
+    cpus: 2.0
     networks:
       - whisper-net
     depends_on:
@@ -112,6 +125,12 @@ services:
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
       WHISPER_API_TOKEN: ${WHISPER_API_TOKEN:-}
+      WHISPER_API_TOKEN_NAME: ${WHISPER_API_TOKEN_NAME:-default}
+      WHISPER_UI_USER: ${WHISPER_UI_USER:-}
+      WHISPER_UI_PASSWORD: ${WHISPER_UI_PASSWORD:-}
+      WHISPER_UI_SESSION_TTL_SEC: ${WHISPER_UI_SESSION_TTL_SEC:-86400}
+      WHISPER_VRAM_PER_SLOT_MB: ${WHISPER_VRAM_PER_SLOT_MB:-0}
+      WHISPER_VRAM_RESERVE_MB: ${WHISPER_VRAM_RESERVE_MB:-800}
       WHISPER_DIARIZATION: ${WHISPER_DIARIZATION:-0}
       WHISPER_DIARIZE_DEFAULT: ${WHISPER_DIARIZE_DEFAULT:-1}
       HF_TOKEN: ${HF_TOKEN:-}

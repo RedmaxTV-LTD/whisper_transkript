@@ -55,6 +55,8 @@ class TranscribeJobRecord(BaseModel):
     current_step: str = ""
     heartbeat_at: str | None = None
     attempts: int = 0
+    api_key_id: str | None = None
+    api_key_name: str | None = None
 
 
 class TranscribeJobEnqueueResponse(BaseModel):

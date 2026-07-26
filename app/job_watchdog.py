@@ -51,6 +51,12 @@ async def maybe_mark_job_stale(redis: redis.Redis, job_id: str) -> TranscribeJob
         }
     )
     await save_job(redis, patched)
+    try:
+        from app.api_keys import bump_key_terminal
+
+        await bump_key_terminal(redis, getattr(rec, "api_key_id", None), status="stale_failed")
+    except Exception:
+        log.exception("api_key_stats_stale_bump_failed job_id=%s", job_id)
     log.warning(
         "transcribe_job_failed job_id=%s dedup_key=%s status=stale_failed current_step=%s error=%s",
         job_id,

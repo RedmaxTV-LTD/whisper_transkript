@@ -24,8 +24,11 @@ log = logging.getLogger(__name__)
 KEY_PREFIX_JOB = "whisper:job:"
 KEY_PREFIX_DEDUP = "whisper:dedup:"
 QUEUE_KEY = "whisper:queue"
+ACTIVE_JOBS_KEY = "whisper:jobs:active"  # SET job_id для нефинальных статусов (быстрый UI)
 LOCK_PREFIX = "whisper:dedup_lock:"
 WORKER_ALIVE_KEY = "whisper:worker:alive"
+# Флаг исчерпания квоты OpenAI: API читает в /health, worker ставит/снимает.
+OPENAI_QUOTA_EXCEEDED_KEY = "whisper:openai:quota_exceeded"
 # Префикс для программной проверки; полный текст — в recover_jobs_on_worker_startup.
 WORKER_ORPHAN_ERROR = (
     "worker_orphaned: whisper-worker was restarted during processing; "
@@ -84,6 +87,38 @@ async def get_job(redis: redis.Redis, job_id: str) -> TranscribeJobRecord | None
 
 async def save_job(redis: redis.Redis, rec: TranscribeJobRecord) -> None:
     await redis.set(job_key(rec.job_id), rec.model_dump_json())
+    try:
+        if rec.status in TERMINAL_STATUSES:
+            await redis.srem(ACTIVE_JOBS_KEY, rec.job_id)
+        else:
+            await redis.sadd(ACTIVE_JOBS_KEY, rec.job_id)
+    except Exception:
+        log.exception("active_jobs_index_update_failed job_id=%s", rec.job_id)
+
+
+async def list_active_job_ids(redis: redis.Redis) -> list[str]:
+    try:
+        ids = await redis.smembers(ACTIVE_JOBS_KEY)
+    except Exception:
+        log.exception("active_jobs_smembers_failed")
+        return []
+    return [str(x) for x in (ids or [])]
+
+
+async def rebuild_active_jobs_index(redis: redis.Redis) -> int:
+    """Полный пересбор SET активных job (старт API/worker)."""
+    pipe = redis.pipeline(transaction=True)
+    pipe.delete(ACTIVE_JOBS_KEY)
+    n = 0
+    for jid in await scan_job_ids(redis):
+        rec = await get_job(redis, jid)
+        if rec is None or rec.status in TERMINAL_STATUSES:
+            continue
+        pipe.sadd(ACTIVE_JOBS_KEY, jid)
+        n += 1
+    await pipe.execute()
+    log.info("active_jobs_index_rebuilt count=%s", n)
+    return n
 
 
 async def get_job_id_for_dedup(redis: redis.Redis, dedup_key: str) -> str | None:
@@ -213,6 +248,8 @@ async def claim_or_get_existing_job(
     redis: redis.Redis,
     *,
     payload: dict[str, Any],
+    api_key_id: str | None = None,
+    api_key_name: str | None = None,
 ) -> tuple[TranscribeJobRecord, bool]:
     """Создаёт новую задачу или возвращает существующую по dedup_key. existing=True если не создавали новую."""
     dedup_key = compute_dedup_key_from_payload_dict(payload)
@@ -288,6 +325,8 @@ async def claim_or_get_existing_job(
             current_step="queued",
             heartbeat_at=now,
             attempts=0,
+            api_key_id=api_key_id,
+            api_key_name=api_key_name,
         )
         pipe = redis.pipeline(transaction=True)
         pipe.set(job_key(job_id), rec.model_dump_json())
@@ -295,11 +334,12 @@ async def claim_or_get_existing_job(
         await pipe.execute()
         await enqueue_job_id(redis, job_id)
         log.info(
-            "transcribe_job_created job_id=%s dedup_key=%s status=%s current_step=%s",
+            "transcribe_job_created job_id=%s dedup_key=%s status=%s current_step=%s api_key=%s",
             job_id,
             dedup_key,
             rec.status,
             rec.current_step,
+            api_key_name or api_key_id or "-",
         )
         return rec, False
     finally:
@@ -343,6 +383,34 @@ async def clear_worker_alive(redis: redis.Redis) -> None:
 
 async def is_worker_alive(redis: redis.Redis) -> bool:
     return bool(await redis.exists(WORKER_ALIVE_KEY))
+
+
+async def set_openai_quota_exceeded(redis: redis.Redis, detail: str) -> None:
+    """Пометить, что OpenAI вернул insufficient_quota / exceeded current quota."""
+    payload = json.dumps(
+        {
+            "error": "openai_quota_exceeded",
+            "detail": (detail or "")[:500],
+            "at": _utc_iso(),
+        },
+        ensure_ascii=False,
+    )
+    await redis.set(OPENAI_QUOTA_EXCEEDED_KEY, payload)
+
+
+async def clear_openai_quota_exceeded(redis: redis.Redis) -> None:
+    await redis.delete(OPENAI_QUOTA_EXCEEDED_KEY)
+
+
+async def get_openai_quota_exceeded(redis: redis.Redis) -> dict[str, Any] | None:
+    raw = await redis.get(OPENAI_QUOTA_EXCEEDED_KEY)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {"error": "openai_quota_exceeded", "detail": str(raw)}
+    except Exception:
+        return {"error": "openai_quota_exceeded", "detail": str(raw)}
 
 
 async def flush_queue_and_reenqueue_pending_jobs(redis: redis.Redis) -> int:
