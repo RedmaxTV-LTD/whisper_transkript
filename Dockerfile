@@ -1,7 +1,8 @@
 # Образ с CUDA/cuDNN; сервис опционально поднимается на хосте с GPU.
 # CUDA 12.2.x: ориентир по строке nvidia-smi «CUDA Version» (макс. toolkit для драйвера).
 # Драйвер 535.x обычно показывает 12.2 — образ 12.6+ даёт forward compatibility / ошибки на Pascal (1080 Ti).
-FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
+# База с nvcr.io: Docker Hub (docker.io/nvidia/cuda) часто даёт TLS timeout на этом хосте.
+FROM nvcr.io/nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

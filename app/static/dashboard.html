@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Whisper Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #1a2332;
+      --muted: #5c6b7a;
+      --line: rgba(26, 35, 50, 0.12);
+      --paper: #f3f6f4;
+      --panel: rgba(255, 255, 255, 0.72);
+      --accent: #0d8f7c;
+      --accent-deep: #076b5c;
+      --warn: #c45c26;
+      --ok: #1f7a4c;
+      --shadow: 0 18px 50px rgba(26, 35, 50, 0.08);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "IBM Plex Sans", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 500px at 12% -10%, rgba(13, 143, 124, 0.18), transparent 55%),
+        radial-gradient(700px 420px at 100% 0%, rgba(43, 108, 176, 0.14), transparent 50%),
+        linear-gradient(165deg, #e8efe9 0%, var(--paper) 42%, #e4ebe8 100%);
+      background-attachment: fixed;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; opacity: 0.35;
+      background-image:
+        linear-gradient(rgba(26, 35, 50, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(26, 35, 50, 0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    }
+    .wrap { width: min(1120px, calc(100% - 2rem)); margin: 0 auto; padding: 2.25rem 0 3.5rem; position: relative; z-index: 1; }
+    .brand { font-family: "Fraunces", serif; font-weight: 700; font-size: clamp(2.2rem, 5vw, 3.2rem); letter-spacing: -0.03em; line-height: 0.95; margin: 0; }
+    .brand span { color: var(--accent-deep); animation: brand-flicker 4.5s ease-in-out infinite; }
+    .lede { margin: 0.6rem 0 0; max-width: 36rem; color: var(--muted); font-size: 1.02rem; line-height: 1.45; }
+    .pill { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.35rem 0.75rem; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,0.55); font-size: 0.82rem; font-weight: 500; }
+    .dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--muted); }
+    .dot.live { background: var(--ok); animation: pulse 1.8s ease-out infinite; }
+    .dot.down { background: var(--warn); }
+    .status-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 1rem; }
+    .grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 1rem; margin-top: 1.5rem; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+    .panel {
+      background: var(--panel); backdrop-filter: blur(14px); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.25rem 1.35rem 1.4rem;
+      animation: rise 0.7s ease-out both;
+    }
+    .panel h2 { margin: 0 0 0.35rem; font-family: "Fraunces", serif; font-size: 1.3rem; font-weight: 600; letter-spacing: -0.02em; }
+    .hint { margin: 0 0 1rem; color: var(--muted); font-size: 0.88rem; line-height: 1.4; }
+    .span-2 { grid-column: 1 / -1; }
+    .backend-toggle, .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+    .mode-btn, .btn {
+      appearance: none; border: 1.5px solid var(--line); background: rgba(255,255,255,0.65);
+      border-radius: 14px; padding: 0.85rem 0.9rem; text-align: left; cursor: pointer;
+      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; font: inherit; color: inherit;
+    }
+    .mode-btn:hover, .btn:hover { transform: translateY(-1px); }
+    .mode-btn:disabled, .btn:disabled { opacity: 0.55; cursor: wait; }
+    .mode-btn .label { display: block; font-weight: 600; margin-bottom: 0.2rem; }
+    .mode-btn .sub { display: block; color: var(--muted); font-size: 0.8rem; line-height: 1.3; }
+    .mode-btn.active.local { border-color: rgba(43, 108, 176, 0.55); background: linear-gradient(160deg, rgba(43,108,176,0.12), rgba(255,255,255,0.7)); box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.12); }
+    .mode-btn.active.openai { border-color: rgba(180, 83, 9, 0.5); background: linear-gradient(160deg, rgba(180,83,9,0.12), rgba(255,255,255,0.7)); box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.1); }
+    .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); text-align: center; font-weight: 500; }
+    .btn.ghost { text-align: center; }
+    .switch-note, .note { min-height: 1.2rem; font-size: 0.85rem; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+    .note.warn { color: var(--warn); } .note.ok { color: var(--ok); }
+    .metrics { display: grid; gap: 0.85rem; }
+    .metric-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+    .metric-name { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+    .metric-val { font-family: "IBM Plex Mono", monospace; font-size: 0.92rem; font-weight: 500; }
+    .bar { height: 10px; border-radius: 999px; background: rgba(26, 35, 50, 0.08); overflow: hidden; }
+    .bar > i { display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1); background: linear-gradient(90deg, var(--accent), #2bb3a0); }
+    .bar.cpu > i { background: linear-gradient(90deg, #2b6cb0, #5b9bd5); }
+    .bar.ram > i { background: linear-gradient(90deg, var(--accent-deep), #2bb3a0); }
+    .bar.gpu > i { background: linear-gradient(90deg, #0e7490, #22d3ee); }
+    .bar.slots > i { background: linear-gradient(90deg, var(--warn), #e8a05c); }
+    .big-stat { display: flex; align-items: end; gap: 0.55rem; margin: 0.35rem 0 0.85rem; }
+    .big-stat .n {
+      font-family: "Fraunces", serif; font-size: 3rem; line-height: 0.9; letter-spacing: -0.04em; font-weight: 700;
+      background: linear-gradient(135deg, var(--ink), var(--accent-deep)); -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .big-stat .of { color: var(--muted); font-family: "IBM Plex Mono", monospace; padding-bottom: 0.3rem; }
+    label.field { display: grid; gap: 0.35rem; font-size: 0.82rem; color: var(--muted); font-weight: 500; }
+    input[type="text"], input[type="password"], input[type="number"] {
+      border: 1px solid var(--line); border-radius: 10px; padding: 0.55rem 0.75rem; font: inherit;
+      background: rgba(255,255,255,0.85); color: var(--ink); width: 100%;
+    }
+    table.jobs { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    table.jobs th { text-align: left; color: var(--muted); font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--line); }
+    table.jobs td { padding: 0.5rem 0.35rem; border-bottom: 1px solid rgba(26, 35, 50, 0.06); font-family: "IBM Plex Mono", monospace; font-size: 0.76rem; vertical-align: top; }
+    .empty { color: var(--muted); font-size: 0.9rem; padding: 0.4rem 0; }
+    .hidden { display: none !important; }
+    #login-view {
+      min-height: 70vh; display: grid; place-items: center; animation: rise 0.6s ease-out both;
+    }
+    .login-card { width: min(400px, 100%); }
+    .login-card form { display: grid; gap: 0.85rem; margin-top: 1rem; }
+    .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+    .key-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .btn.small { padding: 0.35rem 0.65rem; border-radius: 8px; font-size: 0.8rem; }
+    .token-once {
+      margin-top: 0.75rem; padding: 0.75rem; border-radius: 12px; background: rgba(13, 143, 124, 0.1);
+      border: 1px solid rgba(13, 143, 124, 0.25); font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; word-break: break-all;
+    }
+    footer.note { margin-top: 1.25rem; color: var(--muted); font-size: 0.8rem; }
+    @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(31, 122, 76, 0.45); } 70% { box-shadow: 0 0 0 8px rgba(31, 122, 76, 0); } 100% { box-shadow: 0 0 0 0 rgba(31, 122, 76, 0); } }
+    @keyframes brand-flicker { 0%, 100% { opacity: 1; } 50% { opacity: 0.75; filter: brightness(1.12); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="login-view">
+      <section class="panel login-card">
+        <h1 class="brand">Whisper <span>Control</span></h1>
+        <p class="lede">Вход в панель управления. Логин и пароль задаются в `.env` (`WHISPER_UI_USER` / `WHISPER_UI_PASSWORD`).</p>
+        <form id="login-form">
+          <label class="field">Логин<input id="login-user" type="text" autocomplete="username" required /></label>
+          <label class="field">Пароль<input id="login-pass" type="password" autocomplete="current-password" required /></label>
+          <button class="btn primary" type="submit">Войти</button>
+          <div class="note" id="login-note"></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="app-view" class="hidden">
+      <header class="topbar">
+        <div>
+          <h1 class="brand">Whisper <span>Control</span></h1>
+          <div class="status-row">
+            <span class="pill"><span id="alive-dot" class="dot"></span><span id="alive-label">worker…</span></span>
+            <span class="pill" id="backend-pill">backend —</span>
+            <span class="pill" id="user-pill">user</span>
+            <button type="button" class="btn small ghost" id="btn-logout">Выйти</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Бэкенд</h2>
+          <p class="hint">Смена применится, когда worker освободит слоты.</p>
+          <div class="backend-toggle">
+            <button type="button" class="mode-btn local" data-backend="local">
+              <span class="label">Local GPU</span>
+              <span class="sub">faster-whisper · лимит по VRAM</span>
+            </button>
+            <button type="button" class="mode-btn openai" data-backend="openai">
+              <span class="label">OpenAI API</span>
+              <span class="sub">облачные transcriptions</span>
+            </button>
+          </div>
+          <div class="note" id="switch-note"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Одновременные потоки</h2>
+          <div class="row-2" style="margin-bottom:0.85rem;">
+            <label class="field">GPU (local)
+              <input id="input-local-max" type="number" min="1" step="1" />
+            </label>
+            <label class="field">OpenAI API
+              <input id="input-openai-max" type="number" min="1" step="1" />
+            </label>
+          </div>
+          <div class="hint" id="vram-hint">VRAM cap: —</div>
+          <button type="button" class="btn primary" id="btn-save-conc">Применить лимиты</button>
+          <div class="note" id="conc-note"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Потоки сейчас</h2>
+          <div class="big-stat">
+            <span class="n" id="slots-active">0</span>
+            <span class="of">/ <span id="slots-max">—</span> слотов</span>
+          </div>
+          <div class="metric">
+            <div class="metric-head"><span class="metric-name">Заполнение</span><span class="metric-val" id="slots-pct">0%</span></div>
+            <div class="bar slots"><i id="bar-slots"></i></div>
+          </div>
+          <div class="row-2" style="margin-top:1rem;">
+            <div><div class="metric-name">Очередь Redis</div><div class="metric-val" id="queue-len">—</div></div>
+            <div><div class="metric-name">Ждут слот</div><div class="metric-val" id="waiting-slot">—</div></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Нагрузка worker</h2>
+          <div class="metrics">
+            <div class="metric">
+              <div class="metric-head"><span class="metric-name">CPU</span><span class="metric-val" id="cpu-val">—</span></div>
+              <div class="bar cpu"><i id="bar-cpu"></i></div>
+            </div>
+            <div class="metric">
+              <div class="metric-head"><span class="metric-name">RAM</span><span class="metric-val" id="ram-val">—</span></div>
+              <div class="bar ram"><i id="bar-ram"></i></div>
+            </div>
+            <div class="metric">
+              <div class="metric-head"><span class="metric-name">GPU</span><span class="metric-val" id="gpu-val">—</span></div>
+              <div class="bar gpu"><i id="bar-gpu"></i></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel span-2">
+          <h2>API-ключи</h2>
+          <div class="row-2" style="margin-bottom:0.85rem; align-items:end;">
+            <label class="field">Имя нового ключа
+              <input id="new-key-name" type="text" placeholder="n8n-prod" maxlength="64" />
+            </label>
+            <button type="button" class="btn primary" id="btn-create-key">Создать ключ</button>
+          </div>
+          <div id="new-token-box" class="token-once hidden"></div>
+          <div id="keys-wrap"><p class="empty">Загрузка…</p></div>
+        </section>
+
+        <section class="panel span-2">
+          <h2>Активные задачи</h2>
+          <div id="jobs-wrap"><p class="empty">Нет активных задач</p></div>
+        </section>
+      </div>
+      <footer class="note">Опрос /metrics/live · cookie-сессия UI · Bearer для /transcribe</footer>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let pollTimer = null;
+    let gpuCap = 1;
+    let refreshGen = 0;
+    let lastWorker = null;
+    let refreshing = false;
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    }
+    function setBar(el, pct) { el.style.width = Math.max(0, Math.min(100, Number(pct) || 0)) + "%"; }
+    function fmtMb(v) {
+      if (v == null || Number.isNaN(v)) return "—";
+      if (v >= 1024) return (v / 1024).toFixed(1) + " GB";
+      return Math.round(v) + " MB";
+    }
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
+        ...opts,
+      });
+      const body = await res.json().catch(() => ({}));
+      return { res, body };
+    }
+
+    function showApp(username) {
+      $("login-view").classList.add("hidden");
+      $("app-view").classList.remove("hidden");
+      $("user-pill").textContent = username || "ui";
+      if (!pollTimer) pollTimer = setInterval(() => { refresh(); }, 3000);
+      refresh();
+    }
+    function showLogin(msg) {
+      $("app-view").classList.add("hidden");
+      $("login-view").classList.remove("hidden");
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (msg) { $("login-note").className = "note warn"; $("login-note").textContent = msg; }
+    }
+
+    async function bootstrap() {
+      const { res, body } = await api("/auth/status");
+      if (!res.ok) { showLogin(body.detail || "Redis недоступен"); return; }
+      if (!body.ui_auth_configured) {
+        showLogin("Задайте WHISPER_UI_USER и WHISPER_UI_PASSWORD в .env и перезапустите API");
+        return;
+      }
+      if (body.authenticated) showApp(body.username);
+      else showLogin();
+    }
+
+    $("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const { res, body } = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username: $("login-user").value, password: $("login-pass").value }),
+      });
+      if (!res.ok) {
+        $("login-note").className = "note warn";
+        $("login-note").textContent = body.detail || ("HTTP " + res.status);
+        return;
+      }
+      showApp(body.username);
+    });
+
+    $("btn-logout").addEventListener("click", async () => {
+      await api("/auth/logout", { method: "POST" });
+      showLogin("Вы вышли");
+    });
+
+    for (const btn of document.querySelectorAll(".mode-btn")) {
+      btn.addEventListener("click", async () => {
+        const { res, body } = await api("/admin/backend", { method: "POST", body: JSON.stringify({ backend: btn.dataset.backend }) });
+        const note = $("switch-note");
+        if (res.status === 401) { showLogin("Сессия истекла"); return; }
+        note.className = "note " + (res.ok ? "ok" : "warn");
+        note.textContent = res.ok ? (body.pending ? `Запрошен ${body.desired_backend}` : `Активен ${body.desired_backend}`) : (body.detail || "error");
+        refresh();
+      });
+    }
+
+    $("btn-save-conc").addEventListener("click", async () => {
+      const local_max = Number($("input-local-max").value);
+      const openai_max = Number($("input-openai-max").value);
+      const note = $("conc-note");
+      if (local_max > gpuCap) {
+        note.className = "note warn";
+        note.textContent = `GPU: максимум ${gpuCap} по VRAM`;
+        return;
+      }
+      const { res, body } = await api("/admin/concurrent", {
+        method: "POST",
+        body: JSON.stringify({ local_max, openai_max }),
+      });
+      if (res.status === 401) { showLogin("Сессия истекла"); return; }
+      note.className = "note " + (res.ok ? "ok" : "warn");
+      if (!res.ok) {
+        const d = body.detail;
+        note.textContent = typeof d === "object" ? (d.hint || d.error || JSON.stringify(d)) : (d || "error");
+        return;
+      }
+      note.textContent = `local=${body.desired_local_max}, openai=${body.desired_openai_max}`;
+      refresh();
+    });
+
+    $("btn-create-key").addEventListener("click", async () => {
+      const name = $("new-key-name").value.trim();
+      if (!name) return;
+      const { res, body } = await api("/admin/api-keys", { method: "POST", body: JSON.stringify({ name }) });
+      if (res.status === 401) { showLogin("Сессия истекла"); return; }
+      if (!res.ok) { alert(body.detail || "error"); return; }
+      $("new-key-name").value = "";
+      const box = $("new-token-box");
+      box.classList.remove("hidden");
+      box.textContent = `Ключ «${body.name}» создан. Скопируйте токен сейчас: ${body.token}`;
+      refresh();
+    });
+
+    function renderKeys(keys) {
+      const wrap = $("keys-wrap");
+      if (!keys || !keys.length) { wrap.innerHTML = '<p class="empty">Нет ключей</p>'; return; }
+      const rows = keys.map((k) => {
+        const s = k.stats || {};
+        const del = k.source === "env" ? "" : `<button type="button" class="btn small" data-del="${escapeHtml(k.id)}">Удалить</button>`;
+        return `<tr>
+          <td>${escapeHtml(k.name)}${k.source === "env" ? " <small>(env)</small>" : ""}</td>
+          <td>${escapeHtml(k.token_preview || "—")}</td>
+          <td>${s.active ?? 0}</td>
+          <td>${s.queued ?? 0}</td>
+          <td>${s.jobs_total ?? 0}</td>
+          <td>${s.jobs_completed ?? 0}</td>
+          <td>${s.jobs_failed ?? 0}</td>
+          <td class="key-actions">${del}</td>
+        </tr>`;
+      }).join("");
+      wrap.innerHTML = `<table class="jobs"><thead><tr>
+        <th>Имя</th><th>Token</th><th>Active</th><th>Queued</th><th>Total</th><th>OK</th><th>Fail</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+      wrap.querySelectorAll("[data-del]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Удалить ключ?")) return;
+          const { res } = await api("/admin/api-keys/" + btn.dataset.del, { method: "DELETE" });
+          if (res.status === 401) showLogin("Сессия истекла");
+          refresh();
+        });
+      });
+    }
+
+    function renderJobs(list) {
+      const wrap = $("jobs-wrap");
+      if (!list || !list.length) { wrap.innerHTML = '<p class="empty">Нет активных задач</p>'; return; }
+      const rows = list.map((j) => `<tr>
+        <td>${escapeHtml(j.status)}</td>
+        <td>${j.progress ?? 0}%</td>
+        <td>${escapeHtml(j.api_key_name || "—")}</td>
+        <td>${escapeHtml((j.job_id || "").slice(0, 8))}…</td>
+        <td>${escapeHtml(j.dedup_key || "—")}</td>
+        <td>${escapeHtml(j.current_step || "")}</td>
+      </tr>`).join("");
+      wrap.innerHTML = `<table class="jobs"><thead><tr><th>Статус</th><th>%</th><th>Ключ</th><th>Job</th><th>Dedup</th><th>Шаг</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+      const gen = ++refreshGen;
+      try {
+        const { res, body: d } = await api("/metrics/live");
+        if (gen !== refreshGen) return;
+        if (res.status === 401) { showLogin("Сессия истекла"); return; }
+        if (res.status === 503 && String(d.detail || "").includes("ui_auth")) {
+          showLogin(d.detail || "UI auth не настроен");
+          return;
+        }
+        if (!res.ok) return;
+
+        const alive = !!d.worker_available;
+        $("alive-dot").className = "dot " + (alive ? "live" : "down");
+        $("alive-label").textContent = alive ? "worker online" : "worker offline";
+
+        // Не затираем панель, если worker stats временно null (nvidia-smi/старт).
+        if (d.worker && typeof d.worker === "object") lastWorker = d.worker;
+        const ws = d.worker || lastWorker || {};
+        const effective = ws.backend || d.effective_backend || "—";
+        const desired = d.desired_backend || effective;
+        $("backend-pill").textContent = "backend " + effective;
+        for (const btn of document.querySelectorAll(".mode-btn")) {
+          btn.classList.toggle("active", btn.dataset.backend === (desired || effective));
+          btn.disabled = !!ws.switching;
+        }
+        const note = $("switch-note");
+        if (ws.switching) { note.className = "note warn"; note.textContent = "Применение конфигурации…"; }
+        else if (d.backend_pending) { note.className = "note warn"; note.textContent = `Запрошен ${desired}, сейчас ${effective}`; }
+        else if (!alive) { note.className = "note warn"; note.textContent = "Worker offline (нет heartbeat в Redis)"; }
+        else if (!d.worker && lastWorker) { note.className = "note warn"; note.textContent = "Метрики worker временно устарели — ждём обновления"; }
+        else { note.className = "note ok"; note.textContent = effective === "openai" ? "OpenAI API" : "Local GPU"; }
+
+        gpuCap = Number(d.gpu_vram_cap_slots || ws.gpu_vram_cap_slots || 1);
+        $("vram-hint").textContent = `VRAM cap: ${gpuCap} слот(ов) · ~${d.vram_per_slot_mb || "?"} MB/слот · GPU ${fmtMb(d.gpu_mem_total_mb || (ws.container || {}).gpu_mem_total_mb)}`;
+        $("input-local-max").max = String(gpuCap);
+        if (document.activeElement !== $("input-local-max")) {
+          $("input-local-max").value = String(d.desired_local_max ?? d.local_max_concurrent_jobs ?? 1);
+        }
+        if (document.activeElement !== $("input-openai-max")) {
+          $("input-openai-max").value = String(d.desired_openai_max ?? d.openai_max_concurrent_jobs ?? 8);
+        }
+
+        const active = ws.active_slots ?? d.jobs?.active_run ?? 0;
+        const max = ws.max_concurrent_jobs ?? d.max_concurrent_jobs ?? 1;
+        $("slots-active").textContent = String(active);
+        $("slots-max").textContent = String(max);
+        const pct = max > 0 ? (active / max) * 100 : 0;
+        $("slots-pct").textContent = Math.round(pct) + "%";
+        setBar($("bar-slots"), pct);
+        $("queue-len").textContent = String(ws.queue_len ?? d.jobs?.queue_len ?? "—");
+        $("waiting-slot").textContent = String(d.jobs?.waiting_slot ?? "—");
+
+        const c = ws.container || {};
+        $("cpu-val").textContent = c.cpu_percent == null ? "—" : c.cpu_percent.toFixed(1) + "%";
+        setBar($("bar-cpu"), Math.min(100, c.cpu_percent || 0));
+        $("ram-val").textContent = c.mem_used_mb == null ? "—" : `${fmtMb(c.mem_used_mb)}${c.mem_limit_mb ? " / " + fmtMb(c.mem_limit_mb) : ""}`;
+        setBar($("bar-ram"), c.mem_percent == null ? 0 : c.mem_percent);
+        // GPU: realtime nvidia-smi с API (d.gpu), иначе fallback на worker.container
+        const g = d.gpu;
+        if (g && g.memory_used_mb != null && g.memory_total_mb) {
+          const used = g.memory_used_mb;
+          const total = g.memory_total_mb;
+          const free = g.memory_free_mb;
+          const util = g.utilization_gpu_percent;
+          const vp = g.memory_used_percent != null
+            ? g.memory_used_percent
+            : Math.min(100, (used / total) * 100);
+          const freeTxt = free != null ? ` · free ${fmtMb(free)}` : "";
+          if (util != null) {
+            $("gpu-val").textContent = `${util.toFixed(0)}% · ${fmtMb(used)} / ${fmtMb(total)}${freeTxt}`;
+            setBar($("bar-gpu"), util);
+          } else {
+            $("gpu-val").textContent = `VRAM ${fmtMb(used)} / ${fmtMb(total)}${freeTxt} (${Math.round(vp)}%)`;
+            setBar($("bar-gpu"), vp);
+          }
+        } else if (c.gpu_util_percent != null) {
+          $("gpu-val").textContent = `${c.gpu_util_percent.toFixed(0)}% · VRAM ${fmtMb(c.gpu_mem_used_mb)} / ${fmtMb(c.gpu_mem_total_mb)}`;
+          setBar($("bar-gpu"), c.gpu_util_percent);
+        } else if (c.gpu_mem_used_mb != null && c.gpu_mem_total_mb) {
+          const vp = Math.min(100, (c.gpu_mem_used_mb / c.gpu_mem_total_mb) * 100);
+          const freeTxt = c.gpu_mem_free_mb != null ? ` · free ${fmtMb(c.gpu_mem_free_mb)}` : "";
+          $("gpu-val").textContent = `VRAM ${fmtMb(c.gpu_mem_used_mb)} / ${fmtMb(c.gpu_mem_total_mb)}${freeTxt} (${Math.round(vp)}%)`;
+          setBar($("bar-gpu"), vp);
+        } else if (c.gpu_mem_total_mb != null) {
+          $("gpu-val").textContent = `VRAM total ${fmtMb(c.gpu_mem_total_mb)}`;
+          setBar($("bar-gpu"), 0);
+        } else {
+          $("gpu-val").textContent = "n/a";
+          setBar($("bar-gpu"), 0);
+        }
+
+        renderKeys(d.api_keys || []);
+        renderJobs(d.jobs?.active_jobs || []);
+      } catch (e) {
+        console.warn("refresh failed", e);
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>
