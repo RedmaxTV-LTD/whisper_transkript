@@ -21,6 +21,18 @@ class OpenAITranscribeError(RuntimeError):
     """Ошибка вызова OpenAI transcriptions."""
 
 
+def is_openai_quota_exceeded_body(status_code: int, body: str) -> bool:
+    """True для исчерпания квоты/биллинга (не путать с rate limit)."""
+    if status_code != 429:
+        return False
+    low = (body or "").lower()
+    return (
+        "insufficient_quota" in low
+        or "exceeded your current quota" in low
+        or ("quota" in low and "billing" in low)
+    )
+
+
 def _ensure_openai_key(settings: Settings) -> str:
     if not settings.openai_api_key:
         raise OpenAITranscribeError("openai_missing_api_key")
@@ -131,42 +143,55 @@ def transcribe_wav_to_parts_openai(
     headers = {"Authorization": f"Bearer {api_key}"}
 
     use_word = settings.intra_segment_split_gap_sec > 0
-    form: dict[str, Any] = {
-        "model": settings.openai_transcribe_model,
-        "response_format": "verbose_json",
-    }
-    if settings.language:
-        form["language"] = settings.language
-    # timestamp_granularities — повторяющиеся поля формы
-    granularities = ["segment"]
-    if use_word:
-        granularities.append("word")
+    suffix = upload_path.suffix.lower()
+    mime = "audio/mpeg" if suffix == ".mp3" else "audio/wav"
+    file_bytes = upload_path.read_bytes()
+
+    # Все поля в multipart через files= (смешение data=list + files=dict ломает httpx TypeError).
+    def _multipart() -> list[tuple[str, Any]]:
+        parts: list[tuple[str, Any]] = [
+            ("file", (upload_path.name, file_bytes, mime)),
+            ("model", (None, settings.openai_transcribe_model)),
+            ("response_format", (None, "verbose_json")),
+            ("timestamp_granularities[]", (None, "segment")),
+        ]
+        if use_word:
+            parts.append(("timestamp_granularities[]", (None, "word")))
+        if settings.language:
+            parts.append(("language", (None, settings.language)))
+        return parts
 
     timeout = httpx.Timeout(settings.openai_timeout_sec)
     last_err: Exception | None = None
     try:
         for attempt in range(settings.openai_max_retries + 1):
             try:
-                with upload_path.open("rb") as f:
-                    files = {"file": (upload_path.name, f, "application/octet-stream")}
-                    data_fields: list[tuple[str, str]] = [(k, str(v)) for k, v in form.items()]
-                    for g in granularities:
-                        data_fields.append(("timestamp_granularities[]", g))
-                    with httpx.Client(timeout=timeout) as client:
-                        resp = client.post(url, headers=headers, data=data_fields, files=files)
-                if resp.status_code in (429, 500, 502, 503, 504) and attempt < settings.openai_max_retries:
-                    retry_after = resp.headers.get("retry-after")
-                    delay = float(retry_after) if retry_after and retry_after.isdigit() else min(60.0, 2.0 ** attempt)
-                    log.warning(
-                        "openai_transcribe_retry status=%s attempt=%s delay=%s",
-                        resp.status_code,
-                        attempt + 1,
-                        delay,
-                    )
-                    time.sleep(delay)
-                    continue
+                with httpx.Client(timeout=timeout) as client:
+                    resp = client.post(url, headers=headers, files=_multipart())
                 if resp.status_code >= 400:
-                    body_snip = (resp.text or "")[:400]
+                    body_text = resp.text or ""
+                    body_snip = body_text[:400]
+                    if is_openai_quota_exceeded_body(resp.status_code, body_text):
+                        raise OpenAITranscribeError(f"openai_quota_exceeded:{body_snip}")
+                    if (
+                        resp.status_code in (429, 500, 502, 503, 504)
+                        and attempt < settings.openai_max_retries
+                    ):
+                        retry_after = resp.headers.get("retry-after")
+                        delay = (
+                            float(retry_after)
+                            if retry_after and retry_after.isdigit()
+                            else min(60.0, 2.0 ** attempt)
+                        )
+                        log.warning(
+                            "openai_transcribe_retry status=%s attempt=%s delay=%s body=%s",
+                            resp.status_code,
+                            attempt + 1,
+                            delay,
+                            body_text[:200],
+                        )
+                        time.sleep(delay)
+                        continue
                     raise OpenAITranscribeError(f"openai_http_{resp.status_code}:{body_snip}")
                 payload = resp.json()
                 if not isinstance(payload, dict):
@@ -179,8 +204,9 @@ def transcribe_wav_to_parts_openai(
                 if attempt < settings.openai_max_retries:
                     delay = min(60.0, 2.0 ** attempt)
                     log.warning(
-                        "openai_transcribe_retry err=%s attempt=%s delay=%s",
+                        "openai_transcribe_retry err=%s detail=%s attempt=%s delay=%s",
                         type(e).__name__,
+                        e,
                         attempt + 1,
                         delay,
                     )
