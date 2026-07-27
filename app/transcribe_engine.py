@@ -150,6 +150,18 @@ def _whisper_segment_to_time_parts(
     return out
 
 
+def _vad_parameters(settings: Settings) -> dict[str, float | int] | None:
+    """Параметры Silero VAD для faster-whisper; None если VAD выключен."""
+    if not settings.vad_filter:
+        return None
+    return {
+        "threshold": settings.vad_threshold,
+        "min_speech_duration_ms": settings.vad_min_speech_duration_ms,
+        "min_silence_duration_ms": settings.vad_min_silence_duration_ms,
+        "speech_pad_ms": settings.vad_speech_pad_ms,
+    }
+
+
 def collect_transcript(model: "WhisperModel", wav_path: str, settings: Settings) -> tuple[str, str | None]:
     patterns = get_spelling_patterns_live(settings.spelling_dict_path, settings.spelling_fixes_enabled)
     use_word_ts = settings.intra_segment_split_gap_sec > 0
@@ -158,6 +170,7 @@ def collect_transcript(model: "WhisperModel", wav_path: str, settings: Settings)
         language=settings.language,
         beam_size=settings.beam_size,
         vad_filter=settings.vad_filter,
+        vad_parameters=_vad_parameters(settings),
         word_timestamps=use_word_ts,
     )
     parts: list[str] = []
@@ -185,6 +198,7 @@ def transcribe_wav_to_parts(
         language=settings.language,
         beam_size=settings.beam_size,
         vad_filter=settings.vad_filter,
+        vad_parameters=_vad_parameters(settings),
         word_timestamps=use_word_ts,
     )
     whisper_parts: list[tuple[float, float, str]] = []

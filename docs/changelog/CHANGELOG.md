@@ -19,6 +19,7 @@
 ### Changed
 
 - Worker при `openai` не загружает faster-whisper / pyannote; при `local` поведение прежнее.
+- Local STT: в `model.transcribe` передаются `vad_parameters` (Silero): `min_silence_duration_ms=500` и др. через `WHISPER_VAD_*` — меньше youtube-галлюцинаций в тишине.
 
 ## [1.0.0] — 2026-06-09
 

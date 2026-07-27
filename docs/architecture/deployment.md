@@ -104,7 +104,11 @@ cd /opt/whisper && docker compose down && docker compose up --build -d
 | `WHISPER_COMPUTE_TYPE` | `float16` | Тип вычислений CTranslate2 |
 | `WHISPER_LANGUAGE` | `ru` | Язык (пусто = auto) |
 | `WHISPER_BEAM_SIZE` | `5` | Beam search |
-| `WHISPER_VAD_FILTER` | `1` | Silero VAD |
+| `WHISPER_VAD_FILTER` | `1` | Silero VAD (вырезка тишины) |
+| `WHISPER_VAD_MIN_SILENCE_MS` | `500` | Мин. тишина между speech-чанками (мс) |
+| `WHISPER_VAD_SPEECH_PAD_MS` | `400` | Паддинг вокруг речи (мс) |
+| `WHISPER_VAD_MIN_SPEECH_MS` | `250` | Мин. длительность speech-чанка (мс) |
+| `WHISPER_VAD_THRESHOLD` | `0.5` | Порог Silero VAD (0…1) |
 | `WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC` | `0.45` | Разбиение сегментов по паузам |
 
 ### Диаризация
