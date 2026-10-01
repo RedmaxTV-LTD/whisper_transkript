@@ -1,0 +1,36 @@
+name: Production Docker image
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # CUDA + PyTorch образ тяжёлый; на runner мало свободного места без очистки.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af || true
+          df -h
+
+      - name: Build and push
+        env:
+          DOCKER_ORGANIZATION: ${{ secrets.DOCKER_ORGANIZATION }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          DOCKER_IMAGE_NAME: ${{ github.event.repository.name }}
+        run: |
+          if [ -z "$DOCKER_ORGANIZATION" ] || [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_PASSWORD" ]; then
+            echo "Нужны секреты DOCKER_ORGANIZATION, DOCKER_USERNAME, DOCKER_PASSWORD" >&2
+            exit 1
+          fi
+          ./scripts/build-image.sh --push "${GITHUB_REF_NAME}"
