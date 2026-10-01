@@ -122,6 +122,12 @@ class Settings:
         )
         self.beam_size: int = max(1, _int("WHISPER_BEAM_SIZE", 5))
         self.vad_filter: bool = _str("WHISPER_VAD_FILTER", "1").strip() in ("1", "true", "yes", "on")
+        # Silero VAD (faster-whisper VadOptions): режет тишину, меньше галлюцинаций вроде
+        # «Спасибо за просмотр!» / «Подписывайтесь на канал.» в паузах.
+        self.vad_min_silence_duration_ms: int = max(0, _int("WHISPER_VAD_MIN_SILENCE_MS", 500))
+        self.vad_speech_pad_ms: int = max(0, _int("WHISPER_VAD_SPEECH_PAD_MS", 400))
+        self.vad_min_speech_duration_ms: int = max(0, _int("WHISPER_VAD_MIN_SPEECH_MS", 250))
+        self.vad_threshold: float = min(1.0, max(0.0, _float("WHISPER_VAD_THRESHOLD", 0.5)))
         # >0: faster-whisper с word_timestamps и разбиение одного сегмента по паузам между словами.
         self.intra_segment_split_gap_sec: float = max(0.0, _float("WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC", 0.45))
         self.download_timeout_sec: float = max(10.0, _float("WHISPER_DOWNLOAD_TIMEOUT_SEC", 300.0))
