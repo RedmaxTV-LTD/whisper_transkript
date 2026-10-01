@@ -1,0 +1,155 @@
+# Прод: запуск уже собранных образов (без build).
+# Образ из CI (тег vX.Y.Z → Docker Hub):
+#   WHISPER_IMAGE=<DOCKER_ORGANIZATION>/whisper_transkript:v1.0.0
+# Локально:
+#   ./scripts/build-image.sh v1.0.0
+#   export WHISPER_IMAGE=<org>/whisper_transkript:v1.0.0
+#
+# Запуск:
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - whisper-net
+    command: ["redis-server", "--appendonly", "yes"]
+
+  whisper-stt:
+    image: ${WHISPER_IMAGE:-whisper-stt:latest}
+    restart: unless-stopped
+    stop_grace_period: 15s
+    networks:
+      - whisper-net
+    depends_on:
+      - redis
+    ports:
+      - "${WHISPER_HOST_PORT:-19900}:19900"
+    volumes:
+      - ${WHISPER_MODELS_HOST_DIR:-./models}:/models
+      - ${WHISPER_LOGS_HOST_DIR:-./logs}:/logs
+      - ${WHISPER_SPELLING_CONFIG_DIR:-./spelling_config}:/config/spelling
+      - ${WHISPER_SPEAKER_ROLES_CONFIG_DIR:-./speaker_roles_config}:/config/speaker_roles
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      WHISPER_LISTEN_PORT: "19900"
+      WHISPER_LOGS_DIR: /logs
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH:-/models/turbo}
+      WHISPER_BACKEND: ${WHISPER_BACKEND:-local}
+      WHISPER_MAX_CONCURRENT_JOBS: ${WHISPER_MAX_CONCURRENT_JOBS:-1}
+      OPENAI_MAX_CONCURRENT_JOBS: ${OPENAI_MAX_CONCURRENT_JOBS:-8}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL:-whisper-1}
+      OPENAI_TIMEOUT_SEC: ${OPENAI_TIMEOUT_SEC:-600}
+      OPENAI_MAX_UPLOAD_MB: ${OPENAI_MAX_UPLOAD_MB:-24}
+      OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-3}
+      WHISPER_JOB_HEARTBEAT_SEC: ${WHISPER_JOB_HEARTBEAT_SEC:-15}
+      WHISPER_JOB_STALE_SEC: ${WHISPER_JOB_STALE_SEC:-300}
+      WHISPER_PROCESS_ROLE: api
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC: ${WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC:-0.45}
+      WHISPER_VAD_FILTER: ${WHISPER_VAD_FILTER:-1}
+      WHISPER_VAD_MIN_SILENCE_MS: ${WHISPER_VAD_MIN_SILENCE_MS:-500}
+      WHISPER_VAD_SPEECH_PAD_MS: ${WHISPER_VAD_SPEECH_PAD_MS:-400}
+      WHISPER_VAD_MIN_SPEECH_MS: ${WHISPER_VAD_MIN_SPEECH_MS:-250}
+      WHISPER_VAD_THRESHOLD: ${WHISPER_VAD_THRESHOLD:-0.5}
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_API_TOKEN: ${WHISPER_API_TOKEN:-}
+      WHISPER_API_TOKEN_NAME: ${WHISPER_API_TOKEN_NAME:-default}
+      WHISPER_UI_USER: ${WHISPER_UI_USER:-}
+      WHISPER_UI_PASSWORD: ${WHISPER_UI_PASSWORD:-}
+      WHISPER_UI_SESSION_TTL_SEC: ${WHISPER_UI_SESSION_TTL_SEC:-86400}
+      WHISPER_VRAM_PER_SLOT_MB: ${WHISPER_VRAM_PER_SLOT_MB:-0}
+      WHISPER_VRAM_RESERVE_MB: ${WHISPER_VRAM_RESERVE_MB:-800}
+      WHISPER_DIARIZATION: ${WHISPER_DIARIZATION:-0}
+      WHISPER_DIARIZE_DEFAULT: ${WHISPER_DIARIZE_DEFAULT:-1}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      PYANNOTE_PIPELINE: ${PYANNOTE_PIPELINE:-pyannote/speaker-diarization-3.1}
+      PYANNOTE_DEVICE: ${PYANNOTE_DEVICE:-cpu}
+      WHISPER_SPELLING_FIXES: ${WHISPER_SPELLING_FIXES:-1}
+      WHISPER_SPELLING_DICT_PATH: ${WHISPER_SPELLING_DICT_PATH:-/config/spelling/dictionary.json}
+      WHISPER_SPEAKER_ROLES_CATALOG: ${WHISPER_SPEAKER_ROLES_CATALOG:-1}
+      WHISPER_SPEAKER_ROLES_CATALOG_PATH: ${WHISPER_SPEAKER_ROLES_CATALOG_PATH:-/config/speaker_roles/catalog.json}
+    command: ["python3", "-m", "app"]
+
+  whisper-worker:
+    image: ${WHISPER_IMAGE:-whisper-stt:latest}
+    restart: unless-stopped
+    stop_grace_period: 20s
+    stop_signal: SIGTERM
+    mem_limit: 8g
+    cpus: 6.0
+    networks:
+      - whisper-net
+    depends_on:
+      - redis
+    volumes:
+      - ${WHISPER_MODELS_HOST_DIR:-./models}:/models
+      - ${WHISPER_LOGS_HOST_DIR:-./logs}:/logs
+      - ${WHISPER_SPELLING_CONFIG_DIR:-./spelling_config}:/config/spelling
+      - ${WHISPER_SPEAKER_ROLES_CONFIG_DIR:-./speaker_roles_config}:/config/speaker_roles
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      WHISPER_LOGS_DIR: /logs
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH:-/models/turbo}
+      WHISPER_BACKEND: ${WHISPER_BACKEND:-local}
+      WHISPER_MAX_CONCURRENT_JOBS: ${WHISPER_MAX_CONCURRENT_JOBS:-1}
+      OPENAI_MAX_CONCURRENT_JOBS: ${OPENAI_MAX_CONCURRENT_JOBS:-8}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL:-whisper-1}
+      OPENAI_TIMEOUT_SEC: ${OPENAI_TIMEOUT_SEC:-600}
+      OPENAI_MAX_UPLOAD_MB: ${OPENAI_MAX_UPLOAD_MB:-24}
+      OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-3}
+      WHISPER_JOB_HEARTBEAT_SEC: ${WHISPER_JOB_HEARTBEAT_SEC:-15}
+      WHISPER_JOB_STALE_SEC: ${WHISPER_JOB_STALE_SEC:-300}
+      WHISPER_PROCESS_ROLE: worker
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC: ${WHISPER_INTRA_SEGMENT_SPLIT_GAP_SEC:-0.45}
+      WHISPER_VAD_FILTER: ${WHISPER_VAD_FILTER:-1}
+      WHISPER_VAD_MIN_SILENCE_MS: ${WHISPER_VAD_MIN_SILENCE_MS:-500}
+      WHISPER_VAD_SPEECH_PAD_MS: ${WHISPER_VAD_SPEECH_PAD_MS:-400}
+      WHISPER_VAD_MIN_SPEECH_MS: ${WHISPER_VAD_MIN_SPEECH_MS:-250}
+      WHISPER_VAD_THRESHOLD: ${WHISPER_VAD_THRESHOLD:-0.5}
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_API_TOKEN: ${WHISPER_API_TOKEN:-}
+      WHISPER_API_TOKEN_NAME: ${WHISPER_API_TOKEN_NAME:-default}
+      WHISPER_UI_USER: ${WHISPER_UI_USER:-}
+      WHISPER_UI_PASSWORD: ${WHISPER_UI_PASSWORD:-}
+      WHISPER_UI_SESSION_TTL_SEC: ${WHISPER_UI_SESSION_TTL_SEC:-86400}
+      WHISPER_VRAM_PER_SLOT_MB: ${WHISPER_VRAM_PER_SLOT_MB:-0}
+      WHISPER_VRAM_RESERVE_MB: ${WHISPER_VRAM_RESERVE_MB:-800}
+      WHISPER_DIARIZATION: ${WHISPER_DIARIZATION:-0}
+      WHISPER_DIARIZE_DEFAULT: ${WHISPER_DIARIZE_DEFAULT:-1}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      PYANNOTE_PIPELINE: ${PYANNOTE_PIPELINE:-pyannote/speaker-diarization-3.1}
+      PYANNOTE_DEVICE: ${PYANNOTE_DEVICE:-cpu}
+      WHISPER_SPELLING_FIXES: ${WHISPER_SPELLING_FIXES:-1}
+      WHISPER_SPELLING_DICT_PATH: ${WHISPER_SPELLING_DICT_PATH:-/config/spelling/dictionary.json}
+      WHISPER_SPEAKER_ROLES_CATALOG: ${WHISPER_SPEAKER_ROLES_CATALOG:-1}
+      WHISPER_SPEAKER_ROLES_CATALOG_PATH: ${WHISPER_SPEAKER_ROLES_CATALOG_PATH:-/config/speaker_roles/catalog.json}
+    command: ["python3", "-m", "app.worker"]
+
+
+networks:
+  whisper-net:
+    name: whisper-net
